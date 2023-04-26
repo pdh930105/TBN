@@ -26,9 +26,10 @@ model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
 
-parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('data', metavar='DIR', help='path to dataset')
-parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18', choices=model_names,
+parser = argparse.ArgumentParser(description='PyTorch TBN Training')
+parser.add_argument('--data_path', default='/data/dataset/', help='path to dataset')
+parser.add_argument('--dataset', default='cifar10', choices=['cifar10', 'cifar100', 'imagenet'], help='dataset name')
+parser.add_argument('-a', '--arch', metavar='ARCH', default='alexnet', choices=model_names,
                     help='model architecture: ' + ' | '.join(model_names) + ' (default: alexnet)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
@@ -57,23 +58,10 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                     help='use pre-trained model')
-parser.add_argument('--world-size', default=-1, type=int,
-                    help='number of nodes for distributed training')
-parser.add_argument('--rank', default=-1, type=int,
-                    help='node rank for distributed training')
-parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
-                    help='url used to set up distributed training')
-parser.add_argument('--dist-backend', default='nccl', type=str,
-                    help='distributed backend')
 parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
-parser.add_argument('--gpu', default=None, type=int,
+parser.add_argument('--gpu', default=0, type=int,
                     help='GPU id to use.')
-parser.add_argument('--multiprocessing-distributed', action='store_true',
-                    help='Use multi-processing distributed training to launch '
-                         'N processes per node, which has N GPUs. This is the '
-                         'fastest way to use PyTorch for either single node or '
-                         'multi node data parallel training')
 
 parser.add_argument('--ternary-delta', default=0.5, type=float, help='The value of delta for ternary inputs')
 parser.add_argument('--ternary-order', default=2, type=int, help='The value of backward order for ternary inputs')
@@ -81,12 +69,10 @@ parser.add_argument('--ternary-momentum', default=0.01, type=float, help='The mo
 parser.add_argument('--ternary-no-scale', default=False, action='store_true',
                     help='ternary inputs without scale factors')
 
-best_acc1 = 0
-
-
 def main():
     args = parser.parse_args()
-
+    best_acc1 = 0
+    
     if args.seed is not None:
         random.seed(args.seed)
         torch.manual_seed(args.seed)
@@ -109,13 +95,95 @@ def main():
     }
     print('==> Ternary Config:', QConv2d.qa_config)
 
+    # Data loading code
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+    # create dataset
+    if args.dataset == 'cifar10':
+        args.num_classes = 10
+
+        train_trainsform = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ])
+        test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            normalize,
+        ])
+
+        train_dataset = datasets.CIFAR10(args.data_path, train=True, download=True, transform=train_trainsform)
+        val_dataset = datasets.CIFAR10(args.data_path, train=False, download=True, transform=test_transform)
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size, shuffle=True,
+            num_workers=args.workers, pin_memory=True)
+
+        val_loader = torch.utils.data.DataLoader(val_dataset,
+            batch_size=args.batch_size, shuffle=False,
+            num_workers=args.workers, pin_memory=True)
+
+
+    elif args.dataset == 'cifar100':
+        args.num_classes = 100
+        train_trainsform = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ])
+        test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            normalize,
+        ])
+
+        train_dataset = datasets.CIFAR100(args.data_path, train=True, download=True, transform=train_trainsform)
+        val_dataset = datasets.CIFAR100(args.data_path, train=False, download=True, transform=test_transform)
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size, shuffle=True,
+            num_workers=args.workers, pin_memory=True)
+
+        val_loader = torch.utils.data.DataLoader(val_dataset,
+            batch_size=args.batch_size, shuffle=False,
+            num_workers=args.workers, pin_memory=True)
+
+
+    else:
+        traindir = os.path.join(args.data_path, 'train')
+        valdir = os.path.join(args.data_path, 'val')
+        args.num_classes = 1000
+        train_dataset = datasets.ImageFolder(
+            traindir,
+            transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size, shuffle=True,
+            num_workers=args.workers, pin_memory=True)
+
+        val_loader = torch.utils.data.DataLoader(
+            datasets.ImageFolder(valdir, transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                normalize,
+            ])),
+            batch_size=args.batch_size, shuffle=False,
+            num_workers=args.workers, pin_memory=True)
+
+    args.arch = args.arch if args.dataset == 'imagenet' else args.arch + '_cifar' 
+
     # create model
     if args.pretrained:
         print("=> using pre-trained model '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
     else:
         print("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
+        model = models.__dict__[args.arch](num_classes=args.num_classes)
 
     # optionally load from a trained model
     if args.load:
@@ -125,8 +193,10 @@ def main():
             model.load_state_dict(trained_model)
         else:
             print("=> no model found at '{}'".format(args.load))
-
+   
+    torch.cuda.set_device(args.gpu)
     model = model.cuda(args.gpu)
+
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
@@ -157,34 +227,6 @@ def main():
             print("=> no checkpoint found at '{}'".format(args.resume))
     cudnn.benchmark = True
 
-    # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]))
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler)
-
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
-
     if args.evaluate:
         validate(val_loader, model, criterion, args)
         return
@@ -209,10 +251,6 @@ def main():
                 'best_acc1': best_acc1,
                 'optimizer': optimizer.state_dict(),
             }, is_best)
-
-
-
-
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -370,7 +408,7 @@ def accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
