@@ -5,7 +5,7 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
 
-from qconv import QConv2d
+from qconv import QConv2d, TBNConv2d
 
 __all__ = ["PreActResNet", "preact_resnet_18", "preact_resnet_34", "preact_resnet_50", "preact_resnet_18_cifar", "preact_resnet_50_cifar"]
 
@@ -62,6 +62,20 @@ class ShortCutC(nn.Module):
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         x = F.adaptive_avg_pool2d(x, y.shape[2:])
         return self.conv(self.relu(self.bn(x))) + y
+    
+class ShotCutQ(nn.Module):
+    def __init__(self, in_planes, out_planes, stride=2, sub_array=128, adc_mode='none'):
+        super().__init__()
+        self.stride= stride
+        self.in_planes = in_planes
+        self.out_planes = out_planes
+
+        self.bn = nn.BatchNorm2d(in_planes)
+        self.relu = nn.ReLU(True)
+        self.conv = QConv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False, bit_precision=8, sub_array=sub_array, adc_mode=adc_mode)
+
+    def forward(self, x, y):
+        return self.conv(self.relu(self.bn(x))) + y
 
 
 def ShortCut(x: torch.Tensor, y: torch.Tensor):
@@ -76,12 +90,36 @@ class BasicBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(in_planes)
         # self.relu1 = nn.ReLU(inplace=True)
         self.relu1 = nn.Identity()
-        self.conv1 = QConv2d(in_planes, planes, 3, stride, 1)
+        self.conv1 = TBNConv2d(in_planes, planes, 3, stride, 1)
 
         self.bn2 = nn.BatchNorm2d(planes)
         # self.relu2 = nn.ReLU(inplace=True)
         self.relu2 = nn.Identity()
-        self.conv2 = QConv2d(planes, planes, 3, 1, 1)
+        self.conv2 = TBNConv2d(planes, planes, 3, 1, 1)
+
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        identity = x
+        x = self.conv1(self.relu1(self.bn1(x)))
+        x = self.conv2(self.relu2(self.bn2(x)))
+        x = self.downsample(identity, x)
+        return x
+
+class TBNBasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1, downsample=ShortCut, sub_array=128, adc_mode='none'):
+        super(BasicBlock, self).__init__()
+        self.bn1 = nn.BatchNorm2d(in_planes)
+        # self.relu1 = nn.ReLU(inplace=True)
+        self.relu1 = nn.Identity()
+        self.conv1 = TBNConv2d(in_planes, planes, 3, stride, 1, sub_array=sub_array, adc_mode=adc_mode)
+        self.bn2 = nn.BatchNorm2d(planes)
+        # self.relu2 = nn.ReLU(inplace=True)
+        self.relu2 = nn.Identity()
+        self.conv2 = TBNConv2d(planes, planes, 3, 1, 1, sub_array=sub_array, adc_mode=adc_mode)
 
         self.downsample = downsample
         self.stride = stride
@@ -102,17 +140,17 @@ class Bottleneck(nn.Module):
         self.bn1 = nn.BatchNorm2d(in_planes)
         # self.relu1 = nn.ReLU(inplace=True)
         self.relu1 = nn.Identity()
-        self.conv1 = QConv2d(in_planes, planes, kernel_size=1)
+        self.conv1 = TBNConv2d(in_planes, planes, kernel_size=1)
 
         self.bn2 = nn.BatchNorm2d(planes)
         # self.relu2 = nn.ReLU(inplace=True)
         self.relu2 = nn.Identity()
-        self.conv2 = QConv2d(planes, planes, kernel_size=3, stride=stride, padding=1)
+        self.conv2 = TBNConv2d(planes, planes, kernel_size=3, stride=stride, padding=1)
 
         self.bn3 = nn.BatchNorm2d(planes)
         # self.relu3 = nn.ReLU(inplace=True)
         self.relu3 = nn.Identity()
-        self.conv3 = QConv2d(planes, planes * 4, kernel_size=1)
+        self.conv3 = TBNConv2d(planes, planes * 4, kernel_size=1)
 
         self.downsample = downsample
         self.stride = stride
@@ -134,12 +172,12 @@ class BasicBlockR(nn.Module):
         # self.relu1 = nn.ReLU(inplace=True)
         self.relu1 = nn.Identity()
         self.bn1 = nn.BatchNorm2d(in_planes)
-        self.conv1 = QConv2d(in_planes, planes, 3, stride, 1)
+        self.conv1 = TBNConv2d(in_planes, planes, 3, stride, 1)
 
         # self.relu2 = nn.ReLU(inplace=True)
         self.relu2 = nn.Identity()
         self.bn2 = nn.BatchNorm2d(planes)
-        self.conv2 = QConv2d(planes, planes, 3, 1, 1)
+        self.conv2 = TBNConv2d(planes, planes, 3, 1, 1)
 
         self.downsample = downsample
         self.stride = stride
@@ -160,17 +198,17 @@ class BottleneckR(nn.Module):
         # self.relu1 = nn.ReLU(inplace=True)
         self.relu1 = nn.Identity()
         self.bn1 = nn.BatchNorm2d(in_planes)
-        self.conv1 = QConv2d(in_planes, planes, kernel_size=1)
+        self.conv1 = TBNConv2d(in_planes, planes, kernel_size=1)
 
         # self.relu2 = nn.ReLU(inplace=True)
         self.relu2 = nn.Identity()
         self.bn2 = nn.BatchNorm2d(planes)
-        self.conv2 = QConv2d(planes, planes, kernel_size=3, stride=stride, padding=1)
+        self.conv2 = TBNConv2d(planes, planes, kernel_size=3, stride=stride, padding=1)
 
         # self.relu3 = nn.ReLU(inplace=True)
         self.relu3 = nn.Identity()
         self.bn3 = nn.BatchNorm2d(planes * 4)
-        self.conv3 = QConv2d(planes, planes * 4, kernel_size=1)
+        self.conv3 = TBNConv2d(planes, planes * 4, kernel_size=1)
 
         self.downsample = downsample
         self.stride = stride
@@ -192,12 +230,12 @@ class BasicBlockBi(nn.Module):
         self.bn1 = nn.BatchNorm2d(in_planes)
         # self.relu1 = nn.ReLU(inplace=True)
         self.relu1 = nn.Identity()
-        self.conv1 = QConv2d(in_planes, planes, 3, stride, 1)
+        self.conv1 = TBNConv2d(in_planes, planes, 3, stride, 1)
 
         self.bn2 = nn.BatchNorm2d(planes)
         # self.relu2 = nn.ReLU(inplace=True)
         self.relu2 = nn.Identity()
-        self.conv2 = QConv2d(planes, planes, 3, 1, 1)
+        self.conv2 = TBNConv2d(planes, planes, 3, 1, 1)
 
         self.downsample = downsample
         self.stride = stride
@@ -217,10 +255,10 @@ class PreActResNet(nn.Module):
                 nn.Conv2d(3, 32, 3, 2, 1, bias=False),
                 nn.BatchNorm2d(32),
                 nn.Identity(),
-                QConv2d(32, 32, 3, 1, 1, bias=False),
+                TBNConv2d(32, 32, 3, 1, 1, bias=False),
                 nn.BatchNorm2d(32),
                 nn.Identity(),
-                QConv2d(32, self.in_planes, 3, 1, 1, bias=False),
+                TBNConv2d(32, self.in_planes, 3, 1, 1, bias=False),
             )
         else:
             self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3)
@@ -273,14 +311,14 @@ class PreActResNet(nn.Module):
         return x
 
 class PreActResNet_CIFAR(nn.Module):
-    def __init__(self, block, layers, num_classes=1000, shortcut=ShortCutC, small_stem=False):
+    def __init__(self, block, layers, num_classes=1000, shortcut=ShortCutC, small_stem=False,  sub_array = 128, adc_mode='none'):
         self.in_planes = 64
         super(PreActResNet_CIFAR, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1) # 7 -> 3 for CIFAR
-        self.layer1 = self._make_layer(block, shortcut, 64, layers[0])
-        self.layer2 = self._make_layer(block, shortcut, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, shortcut, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, shortcut, 512, layers[3], stride=2)
+        self.layer1 = self._make_layer(block, shortcut, 64, layers[0], sub_array=sub_array, adc_mode=adc_mode)
+        self.layer2 = self._make_layer(block, shortcut, 128, layers[1], stride=2, sub_array=sub_array, adc_mode=adc_mode)
+        self.layer3 = self._make_layer(block, shortcut, 256, layers[2], stride=2, sub_array=sub_array, adc_mode=adc_mode)
+        self.layer4 = self._make_layer(block, shortcut, 512, layers[3], stride=2, sub_array=sub_array, adc_mode=adc_mode)
         self.bn = nn.BatchNorm2d(512 * block.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
@@ -296,14 +334,14 @@ class PreActResNet_CIFAR(nn.Module):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
 
-    def _make_layer(self, block, shortcut, planes, blocks, stride=1):
+    def _make_layer(self, block, shortcut, planes, blocks, stride=1, sub_array=128, adc_mode='none'):
         downsample = ShortCut
         if stride != 1 or self.in_planes != planes * block.expansion:
             downsample = shortcut(self.in_planes, planes * block.expansion, stride)
-        layers = [block(self.in_planes, planes, stride, downsample)]
+        layers = [block(self.in_planes, planes, stride, downsample, sub_array=sub_array, adc_mode=adc_mode)]
         self.in_planes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.in_planes, planes))
+            layers.append(block(self.in_planes, planes, sub_array=sub_array, adc_mode=adc_mode))
 
         return nn.Sequential(*layers)
 

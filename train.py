@@ -175,7 +175,7 @@ def main():
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=True)
 
-    args.arch = args.arch if args.dataset == 'imagenet' else args.arch + '_cifar' 
+    args.arch = args.arch if args.dataset == 'imagenet' or "_cifar" in args.arch else args.arch + '_cifar' 
 
     # create model
     if args.pretrained:
@@ -244,13 +244,15 @@ def main():
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
 
+        save_filename = f"{args.arch}_{args.dataset}.pth.tar"
+
         save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
                 'optimizer': optimizer.state_dict(),
-            }, is_best)
+            }, is_best= is_best, filename=save_filename)
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -344,7 +346,8 @@ def validate(val_loader, model, criterion, args):
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        best_filename = f"{filename.split('.')[-3]}_best.pth.tar"
+        shutil.copyfile(filename, best_filename)
 
 
 class AverageMeter(object):
