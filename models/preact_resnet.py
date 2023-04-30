@@ -3,11 +3,49 @@ import torch.nn as nn
 import torch.nn.functional as F
 import sys, os
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+name = 0
 
-
-from qconv import QConv2d, TBNConv2d
+from qconv import TBNConv2d
+from qlinear import TBNLinear
 
 __all__ = ["PreActResNet", "preact_resnet_18", "preact_resnet_34", "preact_resnet_50", "preact_resnet_18_cifar", "preact_resnet_50_cifar"]
+
+def tbnconv3x3(in_planes, out_planes, stride=1, padding=1, bias=False, args=None):
+    """3x3 convolution with padding"""
+    global name
+    conv = TBNConv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+                     padding=padding, bias=bias, sub_array = args.subArray, adc_mode=args.adc_mode, adc_bits=args.adc_bits,
+                     name = 'TBNConv3x3'+'_'+str(name)+'_')
+
+    name +=1
+    return conv
+
+def tbnconv1x1(in_planes, out_planes, stride=1, bias=False, args=None):
+    """1x1 convolution"""
+    global name
+    conv = TBNConv2d(in_planes, out_planes, kernel_size=1, stride=stride,
+                     padding=0, bias=bias, sub_array = args.subArray, adc_mode=args.adc_mode, adc_bits=args.adc_bits,
+                     name = 'TBNConv3x3'+'_'+str(name)+'_')
+    name +=1
+    return conv
+
+def qconv(in_planes, out_planes, kernel_size, stride=1, padding=0, bias=False, args=None):
+    """qconv"""
+    global name
+    # future change TBNConv2d to QConv2d
+    conv = TBNConv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride,
+                     padding=padding, bias=bias, pim_mode=args.pim_mode, sub_array = args.subArray, adc_mode=args.adc_mode, adc_bits=args.adc_bits,
+                     name = 'TBNConv3x3'+'_'+str(name)+'_')
+    name +=1
+    return conv
+
+def Linear(in_planes, out_planes, args):
+    global name
+    linear = TBNLinear(in_features=in_planes, out_features=out_planes, 
+                       pim_mode=args.pim_mode, sub_array = args.subArray, adc_mode=args.adc_mode, adc_bits=args.adc_bits,
+                       name='TBNLinear'+'_'+str(name)+'_')
+
+    return linear
 
 
 class ShortCutA(nn.Module):
@@ -63,7 +101,7 @@ class ShortCutC(nn.Module):
         x = F.adaptive_avg_pool2d(x, y.shape[2:])
         return self.conv(self.relu(self.bn(x))) + y
     
-class ShotCutQ(nn.Module):
+class ShortCutQ(nn.Module):
     def __init__(self, in_planes, out_planes, stride=2, sub_array=128, adc_mode='none'):
         super().__init__()
         self.stride= stride
@@ -383,6 +421,7 @@ shortcut_list = {
     'A': ShortCutA,
     'B': ShortCutB,
     'C': ShortCutC,
+    'Q': ShortCutQ,
 }
 
 
