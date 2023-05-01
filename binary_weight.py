@@ -17,7 +17,7 @@ class binary_weight(torch.autograd.Function):
 
 
 class BinaryWeight(nn.Module):
-    def __init__(self, config: dict, *args, **kwargs):
+    def __init__(self, config: dict = None, *args, **kwargs):
         super().__init__()
         self.config = config
 

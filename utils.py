@@ -1,9 +1,10 @@
 import torch
-from qconv import TBNConv2d
-from qlinear import QLinear
+from qconv import TBNConv2d, QConv2d
+from qlinear import TBNLinear, QLinear
 import numpy as np
 import torch.nn as nn
 import os
+import wage_quantizer
 
 class View(torch.nn.Module):
     """
@@ -23,31 +24,6 @@ class View(torch.nn.Module):
         return 'view{}'.format(self.new_size)
 
 
-def adc_quantize(inputs, sub_array, adc_mode, adc_bits):
-    """
-    inputs: input tensor
-    sub_array: number of sub-array
-    adc_bits: number of adc bits
-    """
-    if adc_mode =='linear':
-        min_val = -sub_array
-        max_val = sub_array
-        step_size = (max_val - min_val) / (2 ** adc_bits)
-        index = torch.clamp(torch.floor((inputs-min_val) / step_size), 0, 2**adc_bits-1) # 0 ~ 2**adc_bits -1 mapping
-        y = index * step_size + min_val
-    elif adc_mode == 'none':
-        y = inputs
-    elif adc_mode =='original':
-        min_val = inputs.min()
-        max_val = inputs.max()
-        step_size = (max_val - min_val).item() / (2 ** adc_bits)
-        index = torch.clamp(torch.floor((inputs-min_val) / step_size), 0, 2**adc_bits-1) # 0 ~ 2**adc_bits -1 mapping
-        y = index * step_size + min_val.item()
-    else:
-        raise NotImplementedError
-    return y
-
-
 def Neural_Sim(self, input, output):
     global model_n
     print("quantize layer ", self.name)
@@ -57,20 +33,28 @@ def Neural_Sim(self, input, output):
     f.write(weight_file_name+' '+input_file_name+' ')
     # FP mode, quantize mode check
     weight_q = self.weight_quantizer(self.weight)
-    if self.mode == 'tbnconv' or self.mode == 'tbnlinear':
+    if 'TBNConv' in self.name or 'TBNLinear' in self.name:
         weight_q = weight_q.sign() # -1, 1
         inputs_q = self.input_quantizer(input[0]).sign() # -1, 0, 1
         length = 2 # 2 bit (-1 = 10, 0 = 00, 1 = 01)
-    else:
-        pass
-    write_matrix_weight(weight_q.cpu().detach().numpy(), weight_file_name)
-    if len(self.weight.shape) > 2 : # convolution
-        k = self.weight.shape[-1] # kw, kh size
-        padding = self.padding
-        stride = self.stride
-        write_matrix_activation_conv(stretch_input(input[0].cpu().data.numpy(),k,padding,stride),None, length, input_file_name)
-    else:
-        write_matrix_activation_fc(input[0].cpu().data.numpy(),None , length, input_file_name)
+        write_matrix_weight(weight_q.cpu().detach().numpy(), weight_file_name)
+        if len(self.weight.shape) > 2 : # convolution
+            k = self.weight.shape[-1] # kw, kh size
+            padding = self.padding
+            stride = self.stride
+            write_matrix_activation_conv(stretch_input(inputs_q.cpu().data.numpy(),k,padding,stride),None, length, input_file_name)
+        else:
+            write_matrix_activation_fc(inputs_q.cpu().data.numpy(),None , length, input_file_name)
+    else: # QConv2d , QLinear
+        weight_q = wage_quantizer.Q(self.weight, self.wl_weight)
+        write_matrix_weight(weight_q.cpu().detach().numpy(), weight_file_name)
+        if len(self.weight.shape) > 2 : # convolution
+            k = self.weight.shape[-1] # kw, kh size
+            padding = self.padding
+            stride = self.stride
+            write_matrix_activation_conv(stretch_input(input[0].cpu().data.numpy(),k,padding,stride),None, length, input_file_name)
+        else:
+            write_matrix_activation_fc(input[0].cpu().data.numpy(),None , self.wl_input, input_file_name)
     
 
 def write_matrix_weight(input_matrix, filename):
@@ -171,6 +155,6 @@ def hardware_evaluation(model,wl_weight,wl_activation,model_name,mode):
     f.write('./NeuroSIM/main ./NeuroSIM/NetWork_'+str(model_name)+'.csv '+str(wl_weight)+' '+str(wl_activation)+' ')
     
     for i, layer in enumerate(model.modules()):
-        if isinstance(layer, (TBNConv2d, nn.Conv2d)) or isinstance(layer, (QLinear, nn.Linear)):
+        if isinstance(layer, (TBNConv2d, QConv2d)) or isinstance(layer, (QLinear, TBNLinear)):
             hook_handle_list.append(layer.register_forward_hook(Neural_Sim))
     return hook_handle_list

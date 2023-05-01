@@ -19,8 +19,8 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import models
 
-from qconv import QConv2d
-from qlinear import QLinear
+from qconv import QConv2d, TBNConv2d
+from qlinear import QLinear, TBNLinear
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -63,14 +63,35 @@ parser.add_argument('--seed', default=None, type=int,
 parser.add_argument('--gpu', default=0, type=int,
                     help='GPU id to use.')
 
+# ternary option
 parser.add_argument('--ternary-delta', default=0.5, type=float, help='The value of delta for ternary inputs')
 parser.add_argument('--ternary-order', default=2, type=int, help='The value of backward order for ternary inputs')
 parser.add_argument('--ternary-momentum', default=0.01, type=float, help='The momentum of ternary inputs')
 parser.add_argument('--ternary-no-scale', default=False, action='store_true',
                     help='ternary inputs without scale factors')
 
+# neurosim option
+parser.add_argument('--full-quantize', default=False, action='store_true', help='full quantize the model')
+parser.add_argument('--wl_weight', default=8, type=int, help='weight bit width')
+parser.add_argument('--wl_activate', default=8, type=int, help='activation bit width')
+parser.add_argument('--wl_error', default=-1, type=int, help='error bit width')
+parser.add_argument('--inference', default=0, help='run hardware inference simulate')
+parser.add_argument('--subArray', default=128, help='size of subArray (e.g. 128*128)')
+parser.add_argument('--ADCprecision', default=5, help='ADC precision (e.g. 5-bit)')
+parser.add_argument('--adc_mode', default='original', help='ADC mode (e.g. original, linear, none)')
+parser.add_argument('--cellBit', default=4, help='cell precision (e.g. 4-bit/cell)')
+parser.add_argument('--onoffratio', default=10, help='device on/off ratio (e.g. Gmax/Gmin = 3)')
+# if do not run the device retention / conductance variation effects, set vari=0, v=0
+parser.add_argument('--vari', default=0, help='conductance variation (e.g. 0.1 standard deviation to generate random variation)')
+parser.add_argument('--t', default=0, help='retention time')
+parser.add_argument('--v', default=0, help='drift coefficient')
+parser.add_argument('--detect', default=0, help='if 1, fixed-direction drift, if 0, random drift')
+parser.add_argument('--target', default=0, help='drift target for fixed-direction drift')
+
 def main():
     args = parser.parse_args()
+    args.model = args.arch
+    args.logger = None
     best_acc1 = 0
     
     if args.seed is not None:
@@ -87,16 +108,18 @@ def main():
         warnings.warn('You have chosen a specific GPU. This will completely '
                       'disable data parallelism.')
     
-    QConv2d.qa_config = QLinear.qa_config = {
+    TBNConv2d.qa_config = TBNLinear.qa_config = {
         'delta': args.ternary_delta,
         'order': args.ternary_order,
         'momentum': args.ternary_momentum,
         'scale': bool(args.ternary_no_scale)
     }
-    print('==> Ternary Config:', QConv2d.qa_config)
+    print('==> Ternary Config:', TBNConv2d.qa_config)
 
     # Data loading code
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    # Normalize, but do not standardize, the data
+    normalize = transforms.Normalize(mean=[0., 0., 0.], std=[1., 1., 1.])
+    #normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     # create dataset
     if args.dataset == 'cifar10':
@@ -175,15 +198,15 @@ def main():
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=True)
 
-    args.arch = args.arch if args.dataset == 'imagenet' or "_cifar" in args.arch else args.arch + '_cifar' 
-
+    args.arch = args.arch if args.dataset == 'imagenet' or "_cifar" in args.arch else args.arch + '_cifar'
+    args.arch = args.arch if not args.full_quantize else args.arch + '_q'
     # create model
     if args.pretrained:
         print("=> using pre-trained model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](pretrained=True)
+        model = models.__dict__[args.arch](args=args,pretrained=True)
     else:
         print("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](num_classes=args.num_classes)
+        model = models.__dict__[args.arch](num_classes=args.num_classes, args=args)
 
     # optionally load from a trained model
     if args.load:
