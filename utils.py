@@ -31,9 +31,8 @@ def Neural_Sim(self, input, output):
     weight_file_name = './layer_record_' + str(model_n) + '/weight' + self.name + '.csv'
     f = open('./layer_record_' + str(model_n) + '/trace_command.sh', 'a')
     f.write(weight_file_name+' '+input_file_name+' ')
-    # FP mode, quantize mode check
-    weight_q = self.weight_quantizer(self.weight)
     if 'TBNConv' in self.name or 'TBNLinear' in self.name:
+        weight_q = self.weight_quantizer(self.weight)
         weight_q = weight_q.sign() # -1, 1
         inputs_q = self.input_quantizer(input[0]).sign() # -1, 0, 1
         length = 2 # 2 bit (-1 = 10, 0 = 00, 1 = 01)
@@ -52,7 +51,7 @@ def Neural_Sim(self, input, output):
             k = self.weight.shape[-1] # kw, kh size
             padding = self.padding
             stride = self.stride
-            write_matrix_activation_conv(stretch_input(input[0].cpu().data.numpy(),k,padding,stride),None, length, input_file_name)
+            write_matrix_activation_conv(stretch_input(input[0].cpu().data.numpy(),k,padding,stride),None, self.wl_input, input_file_name)
         else:
             write_matrix_activation_fc(input[0].cpu().data.numpy(),None , self.wl_input, input_file_name)
     

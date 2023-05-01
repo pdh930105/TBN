@@ -26,7 +26,7 @@ def tbnconv1x1(in_planes, out_planes, stride=1, bias=False, args=None):
     global name
     conv = TBNConv2d(in_planes, out_planes, kernel_size=1, stride=stride,
                      padding=0, bias=bias, inference=args.inference, subArray = args.subArray, adc_mode=args.adc_mode, ADCprecision=args.ADCprecision,
-                     name = 'TBNConv3x3'+'_'+str(name)+'_')
+                     name = 'TBNConv1x1'+'_'+str(name)+'_')
     name +=1
     return conv
 
